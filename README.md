@@ -35,13 +35,61 @@ Application Note AN232R-01), and [libftdi](https://www.intra2net.com/en/develope
 (open source, Linux) speaks the same wire protocol as the closed-source
 `FTD2XX.dll`.
 
-## What's still unknown
+## Installing and running RT809H.exe under Wine
 
-The software side is understood; the **hardware pinout is not**. Specifically:
-which physical pin of the FTDI chip is wired to which programmer signal
-(CLK / CMD / DAT0-3 for eMMC, CS/CLK/MOSI/MISO for SPI NOR, etc.) on the
-RT809H PCB itself. Determining this requires continuity testing with a
-multimeter against a real unit.
+Confirmed working setup: Wine 9.0, Linux Mint 22.2 (Ubuntu 24.04 base).
+
+### 1. Install the software
+
+Copy the official RT809H software folder as-is into a Wine prefix (32-bit,
+since `RT809H.exe` is a 32-bit Windows app) — `RT809H.exe`, its bundled
+`FTD2XX.dll`, and the `LIB/` folder of `.DAT` algorithm files all need to
+stay together in the same directory, exactly as they ship from the vendor.
+No installer is required; it runs directly from the folder.
+
+### 2. Give Wine raw access to the FTDI chip
+
+The RT809H programmer identifies on USB as vendor `0403` / product `6010`
+(an FTDI FT2232-series dual-channel chip). By default, Linux's kernel
+`ftdi_sio` driver claims this device automatically and exposes it as a
+serial (`/dev/ttyUSB*`) port — but `FTD2XX.dll` (running under Wine) needs
+raw, exclusive USB access instead, so the kernel driver has to be kept off
+the device, and the device node itself needs to be readable/writable by a
+normal user (not just root).
+
+Create `/etc/udev/rules.d/99-rt809h.rules`:
+
+```
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6010", MODE="0666"
+SUBSYSTEM=="usb", DRIVER=="ftdi_sio", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6010", RUN+="/bin/sh -c 'echo $kernel > /sys/bus/usb/drivers/ftdi_sio/unbind'"
+```
+
+- Line 1 makes the raw USB device world-accessible (`0666`), so libusb can
+  open it without root.
+- Line 2 fires whenever the kernel's `ftdi_sio` driver binds to this
+  specific VID:PID and immediately unbinds it, so it doesn't hold the
+  device before Wine gets a chance to claim it.
+
+Apply it:
+
+```
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Then unplug and replug the RT809H (or power-cycle it) so the new rule
+applies to a fresh device attach.
+
+### 3. Run it
+
+```
+wine RT809H.exe
+```
+
+launched from inside the software's folder. With the device plugged in and
+the udev rule applied, the software detects the programmer and can
+read/write chips normally — confirmed end-to-end by reading a full eMMC
+dump from a real TV mainboard.
 
 ## Other findings
 
